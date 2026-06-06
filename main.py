@@ -8,12 +8,13 @@ from PIL import Image
 
 load_dotenv()
 
-LINE_SECRET    = os.environ["LINE_CHANNEL_SECRET"]
-LINE_TOKEN     = os.environ["LINE_CHANNEL_ACCESS_TOKEN"]
-GOOGLE_API_KEY = os.environ["GOOGLE_API_KEY"]
+LINE_SECRET    = os.environ.get("LINE_CHANNEL_SECRET", "")
+LINE_TOKEN     = os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
+GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY", "")
 DB_PATH        = os.environ.get("DB_PATH", "trades.db")
 
-genai.configure(api_key=GOOGLE_API_KEY)
+if GOOGLE_API_KEY:
+    genai.configure(api_key=GOOGLE_API_KEY)
 
 app = FastAPI(title="交易紀錄 Bot API")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
