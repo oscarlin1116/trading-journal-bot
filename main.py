@@ -1,20 +1,15 @@
-import os, hashlib, hmac, base64, json, re, sqlite3, httpx, contextlib, io
+import os, hashlib, hmac, base64, json, re, sqlite3, httpx, contextlib
 from datetime import datetime
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
-from google import genai
-from google.genai import types
-from PIL import Image
 
 load_dotenv()
 
-LINE_SECRET    = os.environ.get("LINE_CHANNEL_SECRET", "")
-LINE_TOKEN     = os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
-GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY", "AQ.Ab8RN6Kso8QB8E8i3PfZneHUS9d45iZeLhu-HcVkZjjM3RCo-g")
-DB_PATH        = os.environ.get("DB_PATH", "trades.db")
-
-gemini = genai.Client(api_key=GOOGLE_API_KEY)
+LINE_SECRET        = os.environ.get("LINE_CHANNEL_SECRET", "")
+LINE_TOKEN         = os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
+OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
+DB_PATH            = os.environ.get("DB_PATH", "trades.db")
 
 app = FastAPI(title="交易紀錄 Bot API")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
@@ -86,7 +81,7 @@ async def line_reply(reply_token: str, text: str):
             json={"replyToken": reply_token, "messages": [{"type": "text", "text": text}]},
         )
 
-# ── Gemini Vision ─────────────────────────────────────────────────────────────
+# ── Vision (OpenRouter) ───────────────────────────────────────────────────────
 
 PROMPT = """
 你是台股券商截圖辨識助理。請從這張「已實現損益」截圖辨識所有交易，回傳 JSON 陣列。
@@ -113,15 +108,25 @@ PROMPT = """
 若不是已實現損益截圖，回傳：{"error": "請傳已實現損益的截圖"}
 """
 
-def analyze_image(image_bytes: bytes) -> list[dict]:
-    response = gemini.models.generate_content(
-        model="gemini-2.0-flash",
-        contents=[
-            types.Part(inline_data=types.Blob(mime_type="image/jpeg", data=image_bytes)),
-            PROMPT,
-        ],
-    )
-    text = response.text.strip()
+async def analyze_image(image_bytes: bytes) -> list[dict]:
+    b64 = base64.b64encode(image_bytes).decode()
+    async with httpx.AsyncClient(timeout=60) as client:
+        r = await client.post(
+            "https://openrouter.ai/api/v1/chat/completions",
+            headers={"Authorization": f"Bearer {OPENROUTER_API_KEY}"},
+            json={
+                "model": "meta-llama/llama-3.2-11b-vision-instruct:free",
+                "messages": [{
+                    "role": "user",
+                    "content": [
+                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
+                        {"type": "text", "text": PROMPT},
+                    ],
+                }],
+            },
+        )
+        r.raise_for_status()
+        text = r.json()["choices"][0]["message"]["content"].strip()
     m = re.search(r"\[.*\]", text, re.DOTALL)
     if m:
         return json.loads(m.group())
@@ -139,7 +144,6 @@ async def webhook(request: Request):
     body = await request.body()
     data = json.loads(body)
 
-    # LINE verification ping (empty events) — skip sig check
     if not data.get("events"):
         return {"ok": True}
 
@@ -152,7 +156,7 @@ async def webhook(request: Request):
         if msg["type"] == "image":
             try:
                 image_bytes = await download_image(msg["id"])
-                trades = analyze_image(image_bytes)
+                trades = await analyze_image(image_bytes)
                 with db() as conn:
                     for t in trades:
                         conn.execute(
@@ -197,4 +201,3 @@ def api_delete_trade(trade_id: int):
 @app.get("/health")
 def health():
     return {"status": "ok", "time": datetime.now().isoformat()}
-
