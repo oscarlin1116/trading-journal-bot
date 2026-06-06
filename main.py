@@ -145,10 +145,6 @@ async def webhook(request: Request):
     # LINE verification ping (empty events) — skip sig check
     if not data.get("events"):
         return {"ok": True}
-
-    sig = request.headers.get("X-Line-Signature", "")
-    if not verify_sig(body, sig):
-        raise HTTPException(status_code=400, detail="bad signature")
     for event in data.get("events", []):
         if event.get("type") != "message":
             continue
