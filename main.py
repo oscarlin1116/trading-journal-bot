@@ -140,11 +140,15 @@ async def analyze_image(image_bytes: bytes, media_type: str) -> list[dict]:
 @app.post("/webhook")
 async def webhook(request: Request):
     body = await request.body()
-    sig  = request.headers.get("X-Line-Signature", "")
+    data = json.loads(body)
+
+    # LINE verification ping (empty events) — skip sig check
+    if not data.get("events"):
+        return {"ok": True}
+
+    sig = request.headers.get("X-Line-Signature", "")
     if not verify_sig(body, sig):
         raise HTTPException(status_code=400, detail="bad signature")
-
-    data = json.loads(body)
     for event in data.get("events", []):
         if event.get("type") != "message":
             continue
