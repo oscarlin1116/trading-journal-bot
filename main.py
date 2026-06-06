@@ -192,3 +192,4 @@ def api_delete_trade(trade_id: int):
 @app.get("/health")
 def health():
     return {"status": "ok", "time": datetime.now().isoformat()}
+
