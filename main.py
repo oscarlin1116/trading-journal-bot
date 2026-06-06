@@ -1,16 +1,19 @@
-import os, hashlib, hmac, base64, json, re, sqlite3, httpx, contextlib
+import os, hashlib, hmac, base64, json, re, sqlite3, httpx, contextlib, io
 from datetime import datetime
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
-import anthropic
+import google.generativeai as genai
+from PIL import Image
 
 load_dotenv()
 
-LINE_SECRET = os.environ["LINE_CHANNEL_SECRET"]
-LINE_TOKEN  = os.environ["LINE_CHANNEL_ACCESS_TOKEN"]
-ANT_KEY     = os.environ["ANTHROPIC_API_KEY"]
-DB_PATH     = os.environ.get("DB_PATH", "trades.db")
+LINE_SECRET    = os.environ["LINE_CHANNEL_SECRET"]
+LINE_TOKEN     = os.environ["LINE_CHANNEL_ACCESS_TOKEN"]
+GOOGLE_API_KEY = os.environ["GOOGLE_API_KEY"]
+DB_PATH        = os.environ.get("DB_PATH", "trades.db")
+
+genai.configure(api_key=GOOGLE_API_KEY)
 
 app = FastAPI(title="交易紀錄 Bot API")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
@@ -65,14 +68,14 @@ def verify_sig(body: bytes, sig: str) -> bool:
     mac = hmac.new(LINE_SECRET.encode(), body, hashlib.sha256).digest()
     return hmac.compare_digest(base64.b64encode(mac).decode(), sig)
 
-async def download_image(msg_id: str) -> tuple[bytes, str]:
+async def download_image(msg_id: str) -> bytes:
     async with httpx.AsyncClient(timeout=30) as client:
         r = await client.get(
             f"https://api-data.line.me/v2/bot/message/{msg_id}/content",
             headers={"Authorization": f"Bearer {LINE_TOKEN}"},
         )
         r.raise_for_status()
-        return r.content, "image/jpeg"
+        return r.content
 
 async def line_reply(reply_token: str, text: str):
     async with httpx.AsyncClient(timeout=10) as client:
@@ -82,7 +85,7 @@ async def line_reply(reply_token: str, text: str):
             json={"replyToken": reply_token, "messages": [{"type": "text", "text": text}]},
         )
 
-# ── Claude Vision ─────────────────────────────────────────────────────────────
+# ── Gemini Vision ─────────────────────────────────────────────────────────────
 
 PROMPT = """
 你是台股券商截圖辨識助理。請從這張「已實現損益」截圖辨識所有交易，回傳 JSON 陣列。
@@ -109,21 +112,11 @@ PROMPT = """
 若不是已實現損益截圖，回傳：{"error": "請傳已實現損益的截圖"}
 """
 
-async def analyze_image(image_bytes: bytes, media_type: str) -> list[dict]:
-    client = anthropic.Anthropic(api_key=ANT_KEY)
-    b64 = base64.b64encode(image_bytes).decode()
-    msg = client.messages.create(
-        model="claude-haiku-4-5-20251001",
-        max_tokens=2048,
-        messages=[{
-            "role": "user",
-            "content": [
-                {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": b64}},
-                {"type": "text", "text": PROMPT},
-            ],
-        }],
-    )
-    text = msg.content[0].text.strip()
+def analyze_image(image_bytes: bytes) -> list[dict]:
+    model = genai.GenerativeModel("gemini-1.5-flash")
+    image = Image.open(io.BytesIO(image_bytes))
+    response = model.generate_content([PROMPT, image])
+    text = response.text.strip()
     m = re.search(r"\[.*\]", text, re.DOTALL)
     if m:
         return json.loads(m.group())
@@ -144,6 +137,7 @@ async def webhook(request: Request):
     # LINE verification ping (empty events) — skip sig check
     if not data.get("events"):
         return {"ok": True}
+
     for event in data.get("events", []):
         if event.get("type") != "message":
             continue
@@ -152,8 +146,8 @@ async def webhook(request: Request):
 
         if msg["type"] == "image":
             try:
-                image_bytes, media_type = await download_image(msg["id"])
-                trades = await analyze_image(image_bytes, media_type)
+                image_bytes = await download_image(msg["id"])
+                trades = analyze_image(image_bytes)
                 with db() as conn:
                     for t in trades:
                         conn.execute(
