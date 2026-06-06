@@ -72,8 +72,7 @@ async def download_image(msg_id: str) -> tuple[bytes, str]:
             headers={"Authorization": f"Bearer {LINE_TOKEN}"},
         )
         r.raise_for_status()
-        media_type = r.headers.get("content-type", "image/jpeg").split(";")[0].strip()
-        return r.content, media_type
+        return r.content, "image/jpeg"
 
 async def line_reply(reply_token: str, text: str):
     async with httpx.AsyncClient(timeout=10) as client:
@@ -114,7 +113,7 @@ async def analyze_image(image_bytes: bytes, media_type: str) -> list[dict]:
     client = anthropic.Anthropic(api_key=ANT_KEY)
     b64 = base64.b64encode(image_bytes).decode()
     msg = client.messages.create(
-        model="claude-haiku-4-5-20251001",
+        model="claude-haiku-4-5",
         max_tokens=2048,
         messages=[{
             "role": "user",
