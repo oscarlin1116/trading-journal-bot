@@ -113,7 +113,7 @@ async def analyze_image(image_bytes: bytes, media_type: str) -> list[dict]:
     client = anthropic.Anthropic(api_key=ANT_KEY)
     b64 = base64.b64encode(image_bytes).decode()
     msg = client.messages.create(
-        model="claude-haiku-4-5",
+        model="claude-haiku-4-5-20251001",
         max_tokens=2048,
         messages=[{
             "role": "user",
@@ -174,7 +174,7 @@ async def webhook(request: Request):
             except ValueError as e:
                 await line_reply(reply_token, f"⚠️ {e}")
             except Exception as e:
-                await line_reply(reply_token, f"❌ 錯誤：{str(e)[:80]}")
+                await line_reply(reply_token, f"❌ 錯誤：{str(e)[:300]}")
 
         elif msg["type"] == "text":
             await line_reply(reply_token, "請傳券商 App 的「已實現損益」截圖，我會自動辨識並記錄。")
