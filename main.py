@@ -3,17 +3,18 @@ from datetime import datetime
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 from PIL import Image
 
 load_dotenv()
 
 LINE_SECRET    = os.environ.get("LINE_CHANNEL_SECRET", "")
 LINE_TOKEN     = os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
-GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY", "AQ.Ab8RN6KfJzXK9zLnMBFgnPVf1jowaApYDZQL9_lEplBaSuPymA")
+GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY", "AQ.Ab8RN6Kso8QB8E8i3PfZneHUS9d45iZeLhu-HcVkZjjM3RCo-g")
 DB_PATH        = os.environ.get("DB_PATH", "trades.db")
 
-genai.configure(api_key=GOOGLE_API_KEY)
+gemini = genai.Client(api_key=GOOGLE_API_KEY)
 
 app = FastAPI(title="交易紀錄 Bot API")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
@@ -113,9 +114,13 @@ PROMPT = """
 """
 
 def analyze_image(image_bytes: bytes) -> list[dict]:
-    model = genai.GenerativeModel("gemini-1.5-flash")
-    image = Image.open(io.BytesIO(image_bytes))
-    response = model.generate_content([PROMPT, image])
+    response = gemini.models.generate_content(
+        model="gemini-2.0-flash",
+        contents=[
+            types.Part(inline_data=types.Blob(mime_type="image/jpeg", data=image_bytes)),
+            PROMPT,
+        ],
+    )
     text = response.text.strip()
     m = re.search(r"\[.*\]", text, re.DOTALL)
     if m:
